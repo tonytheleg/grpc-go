@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	pb "github.com/tonytheleg/grpc-go/proto/todo/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -147,10 +148,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load TLS credentials: %v", err)
 	}
+
+	retryOpts := []retry.CallOption{
+		retry.WithMax(3),
+		retry.WithBackoff(retry.BackoffExponential(100 * time.Millisecond)),
+		retry.WithCodes(codes.Unavailable),
+	}
+
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
-		grpc.WithUnaryInterceptor(unaryAuthInterceptor),
-		grpc.WithStreamInterceptor(streamAuthInterceptor),
+		grpc.WithChainUnaryInterceptor(
+			retry.UnaryClientInterceptor(retryOpts...),
+			unaryAuthInterceptor,
+		),
+		grpc.WithChainStreamInterceptor(
+			retry.StreamClientInterceptor(retryOpts...),
+			streamAuthInterceptor,
+		),
 		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 	}
 
@@ -199,7 +213,7 @@ func main() {
 	fmt.Println("-------------------")
 
 	fmt.Println("-------ERROR-------")
-	// addTask(c, "", dueDate)
+	//addTask(c, "", dueDate)
 	// addTask(c, "not empty", time.Now().Add(-5*time.Second))
 	fmt.Println("-------------------")
 }

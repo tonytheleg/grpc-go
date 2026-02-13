@@ -1,13 +1,28 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/auth"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/ratelimit"
 	pb "github.com/tonytheleg/grpc-go/proto/todo/v1"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 )
 
 type server struct {
@@ -15,44 +30,131 @@ type server struct {
 	pb.UnimplementedTodoServiceServer
 }
 
-func main() {
-	args := os.Args[1:]
+func newMetricsServer(httpAddr string, reg *prometheus.Registry) *http.Server {
+	httpSrv := &http.Server{Addr: httpAddr}
+	m := http.NewServeMux()
+	m.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	httpSrv.Handler = m
+	return httpSrv
+}
 
-	if len(args) == 0 {
-		log.Fatal("usage: server [IP_ADDR]")
-	}
-
-	addr := args[0]
-
-	// setup a listener for the grpc server
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("failed to listen: %v\n", err)
-	}
-
-	defer func(lis net.Listener) {
-		if err := lis.Close(); err != nil {
-			log.Fatalf("unexpected error: %v", err)
-		}
-	}(lis)
-	log.Printf("listening on %s\n", addr)
-
+func newGrpcServer(lis net.Listener, srvMetrics *grpcprom.ServerMetrics) (*grpc.Server, error) {
 	creds, err := credentials.NewServerTLSFromFile("certs/server_cert.pem", "certs/server_key.pem")
 	if err != nil {
-		log.Fatalf("failed to create credentials %v", err)
+		return nil, err
+	}
+
+	logger := log.New(os.Stderr, "", log.Ldate|log.Ltime)
+
+	limiter := &simpleLimiter{
+		limiter: rate.NewLimiter(2, 4),
 	}
 	// setup grpc server options and server
 	opts := []grpc.ServerOption{
 		grpc.Creds(creds),
-		grpc.ChainUnaryInterceptor(unaryAuthInterceptor, unaryLogInterceptor),
-		grpc.ChainStreamInterceptor(streamAuthInterceptor, streamLogInterceptor),
+		grpc.ChainUnaryInterceptor(
+			ratelimit.UnaryServerInterceptor(limiter),
+			otelgrpc.UnaryServerInterceptor(),
+			srvMetrics.UnaryServerInterceptor(),
+			auth.UnaryServerInterceptor(validateAuthToken),
+			logging.UnaryServerInterceptor(logCalls(logger))),
+		grpc.ChainStreamInterceptor(
+			ratelimit.StreamServerInterceptor(limiter),
+			otelgrpc.StreamServerInterceptor(),
+			srvMetrics.StreamServerInterceptor(),
+			auth.StreamServerInterceptor(validateAuthToken),
+			logging.StreamServerInterceptor(logCalls(logger))),
 	}
 	s := grpc.NewServer(opts...)
 
 	pb.RegisterTodoServiceServer(s, &server{d: newDb()})
+	return s, nil
+}
 
-	defer s.Stop()
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v\n", err)
+func main() {
+	args := os.Args[1:]
+
+	if len(args) != 2 {
+		log.Fatal("usage: server [GRPC_IP_ADDR] [METRICS_IP_ADDR]")
 	}
+	grpcAddr := args[0]
+	httpAddr := args[1]
+
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(quit)
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	srvMetrics := grpcprom.NewServerMetrics(
+		grpcprom.WithServerHandlingTimeHistogram(
+			grpcprom.WithHistogramBuckets([]float64{0.001, 0.01, 0.1, 0.3, 0.6, 1, 3, 6, 9, 20, 30, 60, 90, 120}),
+		),
+	)
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(srvMetrics)
+
+	// setup a listener for the grpc server
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatalf("unexpected error: %v\n", err)
+	}
+
+	grpcServer, err := newGrpcServer(lis, srvMetrics)
+	if err != nil {
+		log.Fatalf("unexpected error: %v\n", err)
+	}
+
+	g.Go(func() error {
+		log.Printf("gRPC server listening on %s\n", grpcAddr)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Printf("failed to run gRPC server: %v\n", err)
+			return err
+		}
+		log.Println("gRPC server shutdown")
+		return nil
+	})
+
+	metricsServer := newMetricsServer(httpAddr, reg)
+	g.Go(func() error {
+		log.Printf("metrics server listening on %s\n", httpAddr)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("failed to run metrics server: %v\n", err)
+			return err
+		}
+		log.Println("metrics server shutdown")
+		return nil
+	})
+
+	// handle termination
+	select {
+	case <-quit:
+		break
+	case <-ctx.Done():
+		break
+	}
+
+	// gracefully shutdown servers
+	cancel()
+
+	timeoutCtx, timeoutCancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer timeoutCancel()
+
+	log.Println("shutting down servers, please wait...")
+
+	grpcServer.GracefulStop()
+	metricsServer.Shutdown(timeoutCtx)
+
+	// wait for shutdown
+	if err := g.Wait(); err != nil {
+		log.Fatal(err)
+	}
+
 }

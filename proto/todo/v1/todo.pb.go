@@ -7,6 +7,7 @@
 package v1
 
 import (
+	_ "github.com/envoyproxy/protoc-gen-validate/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
@@ -471,15 +472,15 @@ var File_todo_v1_todo_proto protoreflect.FileDescriptor
 
 const file_todo_v1_todo_proto_rawDesc = "" +
 	"\n" +
-	"\x12todo/v1/todo.proto\x12\atodo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a google/protobuf/field_mask.proto\"\x83\x01\n" +
+	"\x12todo/v1/todo.proto\x12\atodo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a google/protobuf/field_mask.proto\x1a\x17validate/validate.proto\"\x83\x01\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x12\n" +
 	"\x04done\x18\x03 \x01(\bR\x04done\x125\n" +
-	"\bdue_date\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\adueDate\"i\n" +
-	"\x0eAddTaskRequest\x12 \n" +
-	"\vdescription\x18\x01 \x01(\tR\vdescription\x125\n" +
-	"\bdue_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\adueDate\"!\n" +
+	"\bdue_date\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\adueDate\"|\n" +
+	"\x0eAddTaskRequest\x12)\n" +
+	"\vdescription\x18\x01 \x01(\tB\a\xfaB\x04r\x02\x10\x01R\vdescription\x12?\n" +
+	"\bdue_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\b\xfaB\x05\xb2\x01\x02@\x01R\adueDate\"!\n" +
 	"\x0fAddTaskResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\"B\n" +
 	"\x10ListTasksRequest\x12.\n" +
