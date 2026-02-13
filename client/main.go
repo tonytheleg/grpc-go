@@ -10,7 +10,10 @@ import (
 
 	pb "github.com/tonytheleg/grpc-go/proto/todo/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -21,15 +24,30 @@ func addTask(c pb.TodoServiceClient, description string, dueDate time.Time) uint
 	}
 	res, err := c.AddTask(context.Background(), req)
 	if err != nil {
-		panic(err)
+
+		if s, ok := status.FromError(err); ok {
+			switch s.Code() {
+			case codes.InvalidArgument, codes.Internal:
+				log.Fatalf("%s: %s", s.Code(), s.Message())
+			default:
+				log.Fatal(s)
+			}
+		} else {
+			panic(err)
+		}
 	}
 	fmt.Printf("added task: %d\n", res.Id)
 	return res.Id
 }
 
-func printTasks(c pb.TodoServiceClient) {
-	req := &pb.ListTasksRequest{}
-	stream, err := c.ListTasks(context.Background(), req)
+func printTasks(c pb.TodoServiceClient, fm *fieldmaskpb.FieldMask) {
+	req := &pb.ListTasksRequest{
+		Mask: fm,
+	}
+	//ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	//defer cancel()
+	ctx := context.Background()
+	stream, err := c.ListTasks(ctx, req)
 
 	if err != nil {
 		log.Fatalf("unexpected error: %v", err)
@@ -43,12 +61,28 @@ func printTasks(c pb.TodoServiceClient) {
 		if err != nil {
 			log.Fatalf("unexpected error: %v", err)
 		}
+		//if res.Overdue {
+		//	log.Printf("CANCEL called")
+		//	cancel()
+		//}
 		fmt.Println(res.Task.String(), "overdue: ", res.Overdue)
 	}
 }
 
 func updateTasks(c pb.TodoServiceClient, reqs ...*pb.UpdateTasksRequest) {
-	stream, err := c.UpdateTasks(context.Background())
+	ctx := context.Background()
+	/*
+		would fail because its the wrong auth token
+		ctx = metadata.AppendToOutgoingContext(ctx, "auth_token", "authd")
+
+		would fail because it provides more than one value
+		ctx = metadata.AppendToOutgoingContext(ctx, "auth_token", "authd", "auth_token", "authd")
+
+		moved to use interceptors
+		ctx = metadata.AppendToOutgoingContext(ctx, "auth_token", "authd")
+	*/
+
+	stream, err := c.UpdateTasks(ctx)
 	if err != nil {
 		log.Fatalf("unexpected error: %v", err)
 	}
@@ -59,8 +93,8 @@ func updateTasks(c pb.TodoServiceClient, reqs ...*pb.UpdateTasksRequest) {
 			return
 		}
 
-		if req.Task != nil {
-			fmt.Printf("updating task with id: %d\n", req.Task.Id)
+		if req != nil {
+			fmt.Printf("updating task with id: %d\n", req.Id)
 		}
 	}
 	if _, err := stream.CloseAndRecv(); err != nil {
@@ -109,8 +143,15 @@ func main() {
 
 	addr := args[0]
 
+	creds, err := credentials.NewClientTLSFromFile("certs/ca_cert.pem", "x.test.example.com")
+	if err != nil {
+		log.Fatalf("failed to load TLS credentials: %v", err)
+	}
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
+		grpc.WithUnaryInterceptor(unaryAuthInterceptor),
+		grpc.WithStreamInterceptor(streamAuthInterceptor),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 	}
 
 	conn, err := grpc.NewClient(addr, opts...)
@@ -119,30 +160,32 @@ func main() {
 		log.Fatalf("did not connect: %v", err)
 	}
 
+	defer func(conn *grpc.ClientConn) {
+		if err := conn.Close(); err != nil {
+			log.Fatalf("unexpected error: %v", err)
+		}
+	}(conn)
+
 	c := pb.NewTodoServiceClient(conn)
 
 	fmt.Println("--------ADD--------")
 	dueDate := time.Now().Add(5 * time.Second)
 	id1 := addTask(c, "This is a task", dueDate)
-	id2 := addTask(c, "This is a second task", dueDate)
-	id3 := addTask(c, "One more task", dueDate)
+	id2 := addTask(c, "This is another task", dueDate)
+	id3 := addTask(c, "And yet another task", dueDate)
 	fmt.Println("-------------------")
 
 	fmt.Println("--------LIST-------")
-	printTasks(c)
+	printTasks(c, nil)
 	fmt.Println("-------------------")
 
 	fmt.Println("-------UPDATE------")
-	updateTasks(c,
-		[]*pb.UpdateTasksRequest{
-			{Task: &pb.Task{Id: id1, Description: "better task name"}},
-			{Task: &pb.Task{Id: id2, DueDate: timestamppb.New(dueDate.Add(5 * time.Hour))}},
-			{Task: &pb.Task{Id: id3, Done: true}},
-		}...)
-	fmt.Println("-------------------")
-
-	fmt.Println("--------LIST-------")
-	printTasks(c)
+	updateTasks(c, []*pb.UpdateTasksRequest{
+		{Id: id1, Description: "A better name for the task"},
+		{Id: id2, DueDate: timestamppb.New(dueDate.Add(5 * time.Hour))},
+		{Id: id3, Done: true},
+	}...)
+	printTasks(c, nil)
 	fmt.Println("-------------------")
 
 	fmt.Println("-------DELETE------")
@@ -151,12 +194,12 @@ func main() {
 		{Id: id2},
 		{Id: id3},
 	}...)
-	printTasks(c)
+
+	printTasks(c, nil)
 	fmt.Println("-------------------")
 
-	defer func(conn *grpc.ClientConn) {
-		if err := conn.Close(); err != nil {
-			log.Fatalf("unexpected error: %v", err)
-		}
-	}(conn)
+	fmt.Println("-------ERROR-------")
+	// addTask(c, "", dueDate)
+	// addTask(c, "not empty", time.Now().Add(-5*time.Second))
+	fmt.Println("-------------------")
 }

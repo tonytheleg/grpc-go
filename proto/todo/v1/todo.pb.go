@@ -9,6 +9,7 @@ package v1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -188,6 +189,7 @@ func (x *AddTaskResponse) GetId() uint64 {
 
 type ListTasksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mask          *fieldmaskpb.FieldMask `protobuf:"bytes,1,opt,name=mask,proto3" json:"mask,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -220,6 +222,13 @@ func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListTasksRequest.ProtoReflect.Descriptor instead.
 func (*ListTasksRequest) Descriptor() ([]byte, []int) {
 	return file_todo_v1_todo_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ListTasksRequest) GetMask() *fieldmaskpb.FieldMask {
+	if x != nil {
+		return x.Mask
+	}
+	return nil
 }
 
 type ListTasksResponse struct {
@@ -276,7 +285,10 @@ func (x *ListTasksResponse) GetOverdue() bool {
 
 type UpdateTasksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Task          *Task                  `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	Done          bool                   `protobuf:"varint,3,opt,name=done,proto3" json:"done,omitempty"`
+	DueDate       *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=due_date,json=dueDate,proto3" json:"due_date,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -311,9 +323,30 @@ func (*UpdateTasksRequest) Descriptor() ([]byte, []int) {
 	return file_todo_v1_todo_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *UpdateTasksRequest) GetTask() *Task {
+func (x *UpdateTasksRequest) GetId() uint64 {
 	if x != nil {
-		return x.Task
+		return x.Id
+	}
+	return 0
+}
+
+func (x *UpdateTasksRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *UpdateTasksRequest) GetDone() bool {
+	if x != nil {
+		return x.Done
+	}
+	return false
+}
+
+func (x *UpdateTasksRequest) GetDueDate() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DueDate
 	}
 	return nil
 }
@@ -438,7 +471,7 @@ var File_todo_v1_todo_proto protoreflect.FileDescriptor
 
 const file_todo_v1_todo_proto_rawDesc = "" +
 	"\n" +
-	"\x12todo/v1/todo.proto\x12\atodo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x83\x01\n" +
+	"\x12todo/v1/todo.proto\x12\atodo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a google/protobuf/field_mask.proto\"\x83\x01\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x12\n" +
@@ -448,13 +481,17 @@ const file_todo_v1_todo_proto_rawDesc = "" +
 	"\vdescription\x18\x01 \x01(\tR\vdescription\x125\n" +
 	"\bdue_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\adueDate\"!\n" +
 	"\x0fAddTaskResponse\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x04R\x02id\"\x12\n" +
-	"\x10ListTasksRequest\"P\n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\"B\n" +
+	"\x10ListTasksRequest\x12.\n" +
+	"\x04mask\x18\x01 \x01(\v2\x1a.google.protobuf.FieldMaskR\x04mask\"P\n" +
 	"\x11ListTasksResponse\x12!\n" +
 	"\x04task\x18\x01 \x01(\v2\r.todo.v1.TaskR\x04task\x12\x18\n" +
-	"\aoverdue\x18\x02 \x01(\bR\aoverdue\"7\n" +
-	"\x12UpdateTasksRequest\x12!\n" +
-	"\x04task\x18\x01 \x01(\v2\r.todo.v1.TaskR\x04task\"\x15\n" +
+	"\aoverdue\x18\x02 \x01(\bR\aoverdue\"\x91\x01\n" +
+	"\x12UpdateTasksRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x12\n" +
+	"\x04done\x18\x03 \x01(\bR\x04done\x125\n" +
+	"\bdue_date\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\adueDate\"\x15\n" +
 	"\x13UpdateTasksResponse\"$\n" +
 	"\x12DeleteTasksRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\"\x15\n" +
@@ -489,25 +526,27 @@ var file_todo_v1_todo_proto_goTypes = []any{
 	(*DeleteTasksRequest)(nil),    // 7: todo.v1.DeleteTasksRequest
 	(*DeleteTasksResponse)(nil),   // 8: todo.v1.DeleteTasksResponse
 	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
+	(*fieldmaskpb.FieldMask)(nil), // 10: google.protobuf.FieldMask
 }
 var file_todo_v1_todo_proto_depIdxs = []int32{
-	9, // 0: todo.v1.Task.due_date:type_name -> google.protobuf.Timestamp
-	9, // 1: todo.v1.AddTaskRequest.due_date:type_name -> google.protobuf.Timestamp
-	0, // 2: todo.v1.ListTasksResponse.task:type_name -> todo.v1.Task
-	0, // 3: todo.v1.UpdateTasksRequest.task:type_name -> todo.v1.Task
-	1, // 4: todo.v1.TodoService.AddTask:input_type -> todo.v1.AddTaskRequest
-	3, // 5: todo.v1.TodoService.ListTasks:input_type -> todo.v1.ListTasksRequest
-	5, // 6: todo.v1.TodoService.UpdateTasks:input_type -> todo.v1.UpdateTasksRequest
-	7, // 7: todo.v1.TodoService.DeleteTasks:input_type -> todo.v1.DeleteTasksRequest
-	2, // 8: todo.v1.TodoService.AddTask:output_type -> todo.v1.AddTaskResponse
-	4, // 9: todo.v1.TodoService.ListTasks:output_type -> todo.v1.ListTasksResponse
-	6, // 10: todo.v1.TodoService.UpdateTasks:output_type -> todo.v1.UpdateTasksResponse
-	8, // 11: todo.v1.TodoService.DeleteTasks:output_type -> todo.v1.DeleteTasksResponse
-	8, // [8:12] is the sub-list for method output_type
-	4, // [4:8] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	9,  // 0: todo.v1.Task.due_date:type_name -> google.protobuf.Timestamp
+	9,  // 1: todo.v1.AddTaskRequest.due_date:type_name -> google.protobuf.Timestamp
+	10, // 2: todo.v1.ListTasksRequest.mask:type_name -> google.protobuf.FieldMask
+	0,  // 3: todo.v1.ListTasksResponse.task:type_name -> todo.v1.Task
+	9,  // 4: todo.v1.UpdateTasksRequest.due_date:type_name -> google.protobuf.Timestamp
+	1,  // 5: todo.v1.TodoService.AddTask:input_type -> todo.v1.AddTaskRequest
+	3,  // 6: todo.v1.TodoService.ListTasks:input_type -> todo.v1.ListTasksRequest
+	5,  // 7: todo.v1.TodoService.UpdateTasks:input_type -> todo.v1.UpdateTasksRequest
+	7,  // 8: todo.v1.TodoService.DeleteTasks:input_type -> todo.v1.DeleteTasksRequest
+	2,  // 9: todo.v1.TodoService.AddTask:output_type -> todo.v1.AddTaskResponse
+	4,  // 10: todo.v1.TodoService.ListTasks:output_type -> todo.v1.ListTasksResponse
+	6,  // 11: todo.v1.TodoService.UpdateTasks:output_type -> todo.v1.UpdateTasksResponse
+	8,  // 12: todo.v1.TodoService.DeleteTasks:output_type -> todo.v1.DeleteTasksResponse
+	9,  // [9:13] is the sub-list for method output_type
+	5,  // [5:9] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_todo_v1_todo_proto_init() }

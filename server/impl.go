@@ -3,26 +3,85 @@ package main
 import (
 	"context"
 	"io"
+	"log"
+	"slices"
 	"time"
 
 	pb "github.com/tonytheleg/grpc-go/proto/todo/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
+func Filter(msg proto.Message, mask *fieldmaskpb.FieldMask) {
+	if mask == nil || len(mask.Paths) == 0 {
+		return
+	}
+
+	rft := msg.ProtoReflect()
+	rft.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		if !slices.Contains(mask.Paths, string(fd.Name())) {
+			rft.Clear(fd)
+		}
+		return true
+	})
+}
+
 func (s *server) AddTask(ctx context.Context, in *pb.AddTaskRequest) (*pb.AddTaskResponse, error) {
-	id, _ := s.d.addTask(in.Description, in.DueDate.AsTime())
+	if len(in.Description) == 0 {
+		return nil, status.Error(
+			codes.InvalidArgument,
+			"expected a task description, got an empty string",
+		)
+	}
+
+	if in.DueDate.AsTime().Before(time.Now().UTC()) {
+		return nil, status.Error(
+			codes.InvalidArgument,
+			"expected a task due date to be in the future",
+		)
+	}
+
+	id, err := s.d.addTask(in.Description, in.DueDate.AsTime())
+	if err != nil {
+		return nil, status.Errorf(
+			codes.Internal,
+			"unexecpted error: %s", err.Error(),
+		)
+	}
 
 	return &pb.AddTaskResponse{Id: id}, nil
 }
 
 func (s *server) ListTasks(req *pb.ListTasksRequest, stream pb.TodoService_ListTasksServer) error {
-	return s.d.getTasks(func(t interface{}) error {
-		task := t.(*pb.Task)
-		overdue := task.DueDate != nil && !task.Done && task.DueDate.AsTime().Before(time.Now().UTC())
+	ctx := stream.Context()
 
+	return s.d.getTasks(func(t interface{}) error {
+		select {
+		case <-ctx.Done():
+			switch ctx.Err() {
+			case context.Canceled:
+				log.Printf("request canceled: %s", ctx.Err())
+			case context.DeadlineExceeded:
+				log.Printf("request deadline exceeded: %s", ctx.Err())
+			}
+			return ctx.Err()
+		// TODO: replace following case by 'default:' replace by 'default:' on production APIs.
+		case <-time.After(1 * time.Millisecond):
+		}
+
+		task := t.(*pb.Task)
+
+		Filter(task, req.Mask)
+
+		overdue := task.DueDate != nil && !task.Done && task.DueDate.AsTime().Before(time.Now().UTC())
 		err := stream.Send(&pb.ListTasksResponse{
 			Task:    task,
 			Overdue: overdue,
 		})
+
 		return err
 	})
 }
@@ -37,10 +96,10 @@ func (s *server) UpdateTasks(stream pb.TodoService_UpdateTasksServer) error {
 			return err
 		}
 		s.d.updateTask(
-			req.Task.Id,
-			req.Task.Description,
-			req.Task.DueDate.AsTime(),
-			req.Task.Done,
+			req.Id,
+			req.Description,
+			req.DueDate.AsTime(),
+			req.Done,
 		)
 	}
 }
